@@ -118,6 +118,7 @@ GROUP BY
 HAVING 
 	count(*) != (SELECT COUNT(*)/5 FROM analysis.users)
 
+--Доработка представлений
 DROP VIEW IF EXISTS analysis.orders;
 CREATE VIEW analysis.orders AS (
 
