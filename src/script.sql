@@ -4,9 +4,11 @@ CREATE TABLE analysis.dm_rfm_segments  (
 	user_id int4,
 	recency int,
 	frequency int,
-	monetary_value int
-	
-)
+	monetary_value int,
+	CONSTRAINT dm_rfm_segments_recency_check CHECK (((recency >= 1) AND (recency <= 5))),
+	CONSTRAINT dm_rfm_segments_frequency_check CHECK (((frequency >= 1) AND (frequency <= 5))),
+	CONSTRAINT dm_rfm_segments_monetary_value_check CHECK (((monetary_value >= 1) AND (monetary_value <= 5)))
+);
 
 --Представление для заказов из схемы production
 CREATE VIEW analysis.orders AS (
@@ -70,7 +72,9 @@ SELECT
 	count(*) AS count_order,
 	sum(payment) AS value
 FROM analysis.orders
-WHERE status = 4 
+INNER JOIN analysis.status as s
+ON s.id = orders.status
+AND s.key = 'Closed'
 AND date_trunc('month', order_ts)::date >= '2021-01-01' 
 GROUP BY 
 	user_id
@@ -79,15 +83,18 @@ GROUP BY
 INSERT INTO analysis.dm_rfm_segments
 SELECT
 	users.id AS user_id,
-        ntile(5) over (order by coalesce(last_order_date,'1932-02-23 08:07:08.000')) AS recency,
-        ntile(5) over (order by coalesce(count_order,0)) AS frequency,
-        ntile(5) over (order by coalesce(value,0)) AS monetary_value
+        ntile(5) over (order by coalesce(last_order_date, to_timestamp(0))) AS recency,
+        ntile(5) over (order by coalesce(count_order, 0)) AS frequency,
+        ntile(5) over (order by coalesce(value, 0)) AS monetary_value
 FROM analysis.users
 LEFT JOIN group_mart
 ON users.id = group_mart.user_id
 
+```
 
-
+### Валидация витрины
+Запускаем скрипт проверки однородности групп в RFM-сегментах
+```
 --Валидация однородности сегментов по recency
 SELECT 
 	recency,
@@ -117,11 +124,18 @@ GROUP BY
 	monetary_value
 HAVING 
 	count(*) != (SELECT COUNT(*)/5 FROM analysis.users)
+```
 
---Доработка представлений
+## Доработка представлений
+```
 DROP VIEW IF EXISTS analysis.orders;
 CREATE VIEW analysis.orders AS (
-
+WITH log as (
+SELECT DISTINCT
+	order_id,
+	last_value(status_id) over (partition by order_id order by dttm) AS status
+FROM production.orderstatuslog
+)
 SELECT 
 	o.order_id,
 	order_ts,
@@ -130,12 +144,9 @@ SELECT
 	payment,
 	cost,
 	bonus_grant,
-	status
+	log.status
 FROM production.orders as o
-INNER JOIN production.orderstatuslog AS log
+INNER JOIN log
 ON o.order_id = log.order_id
-WHERE log.dttm = (
-SELECT MAX(dttm)
-FROM production.orderstatuslog
-WHERE o.order_id = orderstatuslog.order_id)
 );
+```
